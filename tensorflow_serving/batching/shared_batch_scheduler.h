@@ -149,6 +149,10 @@ class SharedBatchScheduler
     // environment.
     int64 batch_timeout_micros = 1 * 1000 /* 1 millisecond */;
 
+    int64 batch_sla_micros = 10 * 1000;
+
+    bool use_berkeley_batcher_ = false;
+
     // The maximum allowable number of enqueued (accepted by Schedule() but
     // not yet being processed on a batch thread) tasks in terms of batches.
     // If this limit is reached, Schedule() will return an UNAVAILABLE error.
@@ -254,6 +258,7 @@ class Queue {
 
   // Processes a batch that has been returned earlier by ScheduleBatch().
   void ProcessBatch(std::unique_ptr<Batch<TaskType>> batch);
+  int UpdateBatchSize(uint64 last_batch_time_micros, int last_batch_size);
 
   // Determines whether the queue is empty, i.e. has no tasks waiting or being
   // processed.
@@ -313,6 +318,11 @@ class Queue {
   // The number of batches currently being processed by batch threads.
   // Incremented in ScheduleBatch() and decremented in ProcessBatch().
   int num_batches_being_processed_ GUARDED_BY(mu_) = 0;
+
+  // uint64 last_batch_time_ GUARDED_BY(mu_) = -1;
+  // int last_batch_size_ GUARDED_BY(mu_) = -1;
+  
+  int optimal_batch_size_ GUARDED_BY(mu_) = -1;
 
   // Used by CloseAndWaitUntilEmpty() to wait until the queue is empty, for the
   // case in which the queue is not empty when CloseAndWaitUntilEmpty() starts.
@@ -606,16 +616,45 @@ std::unique_ptr<Batch<TaskType>> Queue<TaskType>::ScheduleBatch() {
   return batch_to_schedule;
 }
 
+// CRANKSHAW time this method call
 template <typename TaskType>
 void Queue<TaskType>::ProcessBatch(std::unique_ptr<Batch<TaskType>> batch) {
+  tensorflow::uint64 start_time_micros = env_->NowMicros();
   process_batch_callback_(std::move(batch));
+  LOG(INFO) << "YYYYYYYYYY";
+  tensorflow::uint64 end_time_micros = env_->NowMicros();
+  LOG(INFO) << tensorflow::strings::StrCat(
+            "In shared_batch_scheduler: Latency: ", (end_time_micros - start_time_micros) / 1000.0,
+            " Batch size: ", batch->num_tasks());
 
   {
     mutex_lock l(mu_);
     --num_batches_being_processed_;
+
+    // if (batch->num_tasks() >= optimal_batch_size_) {
+    //   optimal_batch_size_ = UpdateBatchSize((end_time_micros - start_time_micros),
+    //       batch->num_tasks());
+    // }
+    
+    // last_batch_time_ = end_time - start_time;
+    // last_batch_size_ = batch->num_tasks();
+    
     if (empty_notification_ != nullptr && IsEmptyInternal()) {
       empty_notification_->Notify();
     }
+
+    LOG(INFO) << "ZZZZZZZ";
+  }
+}
+
+template <typename TaskType>
+int Queue<TaskType>::UpdateBatchSize(uint64 last_batch_time_micros, int last_batch_size) {
+  if (last_batch_time_micros < options_.batch_sla_micros * 0.9) {
+    return last_batch_size + 2;
+  } else if (last_batch_time_micros > options_.batch_sla_micros) {
+    return last_batch_size * 0.9;
+  } else {
+    return last_batch_size;
   }
 }
 
@@ -641,6 +680,7 @@ void Queue<TaskType>::CloseAndWaitUntilEmpty() {
   empty.WaitForNotification();
 }
 
+
 template <typename TaskType>
 bool Queue<TaskType>::IsEmptyInternal() const {
   return num_batches_being_processed_ == 0 && batches_.size() == 1 &&
@@ -653,16 +693,37 @@ void Queue<TaskType>::StartNewBatch() {
   batches_.emplace_back(new Batch<TaskType>);
 }
 
+// CRANKSHAW implement batch size choice here
 template <typename TaskType>
 bool Queue<TaskType>::IsOpenBatchSchedulable() const {
   Batch<TaskType>* open_batch = batches_.back().get();
   if (open_batch->empty()) {
     return false;
   }
+
+  // if (closed_ || open_batch->size() >= options_.max_batch_size) {
+  //   return true;
+  // } else {
+  //   if (options_.use_berkeley_batcher_) {
+  //     mutex_lock l(mu_);
+  //     return (open_batch->size() >= optimal_batch_size_);
+  //   } else {
+  //     return (env_->NowMicros() >=
+  //       open_batch_start_time_micros_ + options_.batch_timeout_micros);
+  //   }
+  // }
   return closed_ || open_batch->size() >= options_.max_batch_size ||
          env_->NowMicros() >=
              open_batch_start_time_micros_ + options_.batch_timeout_micros;
 }
+
+
+
+
+
+
+
+
 
 template <typename TaskType>
 QueueHandle<TaskType>::QueueHandle(

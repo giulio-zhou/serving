@@ -1,0 +1,4 @@
+startup --output_base=/crankshaw-local/.cache --batch --host_jvm_args=-XX:-UseParallelGC
+build -c opt --config=cuda  --genrule_strategy=standalone --spawn_strategy=standalone
+test --genrule_strategy=standalone --spawn_strategy=standalone
+

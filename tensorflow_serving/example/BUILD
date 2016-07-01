@@ -97,6 +97,31 @@ cc_binary(
     ],
 )
 
+cc_binary(
+    name = "mnist_timed_inference",
+    srcs = [
+        "mnist_timed_inference.cc",
+    ],
+    linkopts = ["-lm"],
+    deps = [
+        ":mnist_inference_proto",
+        "//tensorflow_serving/batching:basic_batch_scheduler",
+        "//tensorflow_serving/batching:batch_scheduler",
+        "//tensorflow_serving/core:manager",
+        "//tensorflow_serving/core:servable_handle",
+        "//tensorflow_serving/core:servable_id",
+        "//tensorflow_serving/servables/tensorflow:simple_servers",
+        "//tensorflow_serving/session_bundle",
+        "//tensorflow_serving/session_bundle:manifest_proto",
+        "//tensorflow_serving/session_bundle:signature",
+        "@grpc//:grpc++",
+        "@org_tensorflow//tensorflow/core:framework",
+        "@org_tensorflow//tensorflow/core:lib",
+        "@org_tensorflow//tensorflow/core:protos_all_cc",
+        "@org_tensorflow//tensorflow/core:tensorflow",
+    ],
+)
+
 py_binary(
     name = "mnist_client",
     srcs = [

@@ -2,7 +2,7 @@ build:cuda --crosstool_top=@org_tensorflow//third_party/gpus/crosstool
 build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 
 build --force_python=py2
-build --python2_path=/usr/bin/python
+build --python2_path=/data/sda1/anaconda2/envs/clipper/bin/python
 
 build --define PYTHON_BIN_PATH=/usr/bin/python
 test --define PYTHON_BIN_PATH=/usr/bin/python

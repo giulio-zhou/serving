@@ -13,7 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""!/usr/grte/v4/bin/python2.7"""
 #!/usr/bin/env python2.7
 
 """A client that talks to mnist_inference service.
@@ -29,12 +28,11 @@ Typical usage example:
 
 import sys
 import threading
-from datetime import datetime
 
 # This is a placeholder for a Google-internal import.
 
-import numpy
 from grpc.beta import implementations
+import numpy
 import tensorflow as tf
 
 from tensorflow_serving.example import mnist_inference_pb2
@@ -69,27 +67,14 @@ def do_inference(hostport, work_dir, concurrency, num_tests):
   channel = implementations.insecure_channel(host, int(port))
   stub = mnist_inference_pb2.beta_create_MnistService_stub(channel)
   cv = threading.Condition()
-  result = {'active': 0, 'error': 0, 'done': 0, 'suc': 0, 'except': 0}
-  times = []
-  run_start = datetime.now()
-
-  def done(result_future, label, start_time):
-    end_time = datetime.now()
-    latency = (end_time - start_time).total_seconds() * 1000.0
-    # times.append(latency)
+  result = {'active': 0, 'error': 0, 'done': 0}
+  def done(result_future, label):
     with cv:
-      # Workaround for gRPC issue https://github.com/grpc/grpc/issues/7133
-      try:
-        exception = result_future.exception()
-      except AttributeError:
-        exception = None
+      exception = result_future.exception()
       if exception:
         result['error'] += 1
-        result['except'] += 1
-        # print exception
+        print exception
       else:
-        times.append(latency)
-        result['suc'] += 1
         sys.stdout.write('.')
         sys.stdout.flush()
         response = numpy.array(result_future.result().value)
@@ -108,16 +93,13 @@ def do_inference(hostport, work_dir, concurrency, num_tests):
       while result['active'] == concurrency:
         cv.wait()
       result['active'] += 1
-    start_time = datetime.now()
     result_future = stub.Classify.future(request, 5.0)  # 5 seconds
     result_future.add_done_callback(
-        lambda result_future, l=label[0]: done(result_future, l, start_time))  # pylint: disable=cell-var-from-loop
+        lambda result_future, l=label[0]: done(result_future, l))  # pylint: disable=cell-var-from-loop
   with cv:
     while result['done'] != num_tests:
       cv.wait()
-    run_end = datetime.now()
-    dur = (run_end - run_start).total_seconds()
-    return (result['error'] / float(num_tests),  times, dur, result['suc'], result['except'])
+    return result['error'] / float(num_tests)
 
 
 def main(_):
@@ -127,16 +109,9 @@ def main(_):
   if not FLAGS.server:
     print 'please specify server host:port'
     return
-  error_rate, latencies, dur, num_successes, num_exceptions = do_inference(FLAGS.server, FLAGS.work_dir,
+  error_rate = do_inference(FLAGS.server, FLAGS.work_dir,
                             FLAGS.concurrency, FLAGS.num_tests)
-
-  # print '\nInference error rate: %s%%' % (error_rate * 100)
-  # print "\nsuccesses: %d, exceptions: %d, total: %d, tests: %d" % (num_successes, num_exceptions, num_successes + num_exceptions, FLAGS.num_tests)
-  mean_latency = numpy.mean(latencies)
-  std_latency = numpy.std(latencies)
-  p99_latency = numpy.percentile(latencies, 99)
-  thru = float(num_successes) / float(dur)
-  print 'Mean latency: %f, p99: %f, thruput: %f' % (mean_latency, p99_latency, thru)
+  print '\nInference error rate: %s%%' % (error_rate * 100)
 
 
 if __name__ == '__main__':
