@@ -81,6 +81,7 @@ const int kImageSize = 28;
 const int kNumChannels = 1;
 const int kImageDataSize = kImageSize * kImageSize * kNumChannels;
 const int kNumLabels = 10;
+const int kEvalBatchSize = 64;
 
 class MnistServiceImpl;
 
@@ -215,10 +216,13 @@ MnistServiceImpl::MnistServiceImpl(
   // specific graph structure and usage.
   tensorflow::serving::BasicBatchScheduler<Task>::Options scheduler_options;
   scheduler_options.thread_pool_name = "mnist_service_batch_threads";
+  scheduler_options.num_batch_threads = 8;
+  scheduler_options.batch_timeout_micros = 10 * 1000;
+  scheduler_options.max_batch_size = kEvalBatchSize;
   // Use a very large queue, to avoid rejecting requests. (Note: a production
   // server with load balancing may want to use the default, much smaller,
   // value.)
-  scheduler_options.max_enqueued_batches = 1000;
+  scheduler_options.max_enqueued_batches = INT_MAX;
   TF_CHECK_OK(tensorflow::serving::BasicBatchScheduler<Task>::Create(
       scheduler_options,
       [this](std::unique_ptr<tensorflow::serving::Batch<Task>> batch) {
@@ -308,7 +312,8 @@ void MnistServiceImpl::DoClassifyInBatch(
   // WARNING(break-tutorial-inline-code): The following code snippet is
   // in-lined in tutorials, please update tutorial documents accordingly
   // whenever code changes.
-  Tensor input(tensorflow::DT_FLOAT, {batch_size, kImageDataSize});
+  // Tensor input(tensorflow::DT_FLOAT, {batch_size, kImageDataSize});
+  Tensor input(tensorflow::DT_FLOAT, {kEvalBatchSize, kImageSize, kImageSize, kNumChannels});
   auto dst = input.flat_outer_dims<float>().data();
   for (int i = 0; i < batch_size; ++i) {
     std::copy_n(
@@ -316,6 +321,18 @@ void MnistServiceImpl::DoClassifyInBatch(
         kImageDataSize, dst);
     dst += kImageDataSize;
   }
+
+  // // pad to fill out batch size if needed
+  for (int i = batch_size; i < kEvalBatchSize; ++i) {
+    std::copy_n(
+        batch->mutable_task(0)->calldata->request().image_data().begin(),
+        kImageDataSize, dst);
+    // LOG(INFO) << tensorflow::strings::StrCat(
+    //         "eeeeeeeeeee: ", i);
+    dst += kImageDataSize;
+  }
+
+  // LOG(INFO) << "created input tensor";
 
   // Run classification.
   tensorflow::Tensor scores;

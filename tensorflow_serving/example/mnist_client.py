@@ -28,6 +28,7 @@ Typical usage example:
 """
 
 import sys
+import json
 import threading
 from datetime import datetime
 
@@ -46,6 +47,8 @@ tf.app.flags.DEFINE_integer('concurrency', 1,
 tf.app.flags.DEFINE_integer('num_tests', 100, 'Number of test images')
 tf.app.flags.DEFINE_string('server', '', 'mnist_inference service host:port')
 tf.app.flags.DEFINE_string('work_dir', '/tmp', 'Working directory. ')
+tf.app.flags.DEFINE_string('results_file', 'mnist_client_results', 'Results file')
+tf.app.flags.DEFINE_integer('worker_id', 0, 'ID for this process')
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -90,8 +93,8 @@ def do_inference(hostport, work_dir, concurrency, num_tests):
       else:
         times.append(latency)
         result['suc'] += 1
-        sys.stdout.write('.')
-        sys.stdout.flush()
+        # sys.stdout.write('.')
+        # sys.stdout.flush()
         response = numpy.array(result_future.result().value)
         prediction = numpy.argmax(response)
         if label != prediction:
@@ -136,6 +139,9 @@ def main(_):
   std_latency = numpy.std(latencies)
   p99_latency = numpy.percentile(latencies, 99)
   thru = float(num_successes) / float(dur)
+  with open("%s/%d.json" % (FLAGS.results_file, FLAGS.worker_id), 'w') as resfile:
+    results = {'mean_lat': mean_latency, 'thru': thru, 'latencies': latencies}
+    json.dump(results, resfile)
   print 'Mean latency: %f, p99: %f, thruput: %f' % (mean_latency, p99_latency, thru)
 
 

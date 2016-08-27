@@ -325,6 +325,18 @@ void MnistServiceImpl::DoClassifyInBatch(
     dst += kImageDataSize;
   }
 
+  // // pad to fill out batch size if needed
+  // for (int i = batch_size; i < kEvalBatchSize; ++i) {
+  //   std::copy_n(
+  //       batch->mutable_task(0)->calldata->request().image_data().begin(),
+  //       kImageDataSize, dst);
+  //   // LOG(INFO) << tensorflow::strings::StrCat(
+  //   //         "eeeeeeeeeee: ", i);
+  //   dst += kImageDataSize;
+  // }
+  //
+  // LOG(INFO) << "created input tensor";
+
   // Run classification.
   tensorflow::uint64 start_time = tensorflow::Env::Default()->NowMicros();
   tensorflow::Tensor scores;
