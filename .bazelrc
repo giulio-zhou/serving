@@ -1,4 +1,4 @@
-startup --output_base=/tmp/.really-really-really-really-really-really-really-really-really-really-really-really-really-really-really-really-really-really-really-long-cache-name --batch --host_jvm_args=-XX:-UseParallelGC
-build -c opt  --genrule_strategy=standalone --spawn_strategy=standalone
+startup --output_base=/tmp/.tf-serving-build-cache --batch --host_jvm_args=-XX:-UseParallelGC
+build -c opt --config=cuda --genrule_strategy=standalone --spawn_strategy=standalone
 test --genrule_strategy=standalone --spawn_strategy=standalone
 

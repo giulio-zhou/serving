@@ -78,24 +78,25 @@ const int kImageSize = 28;
 const int kNumChannels = 1;
 const int kImageDataSize = kImageSize * kImageSize * kNumChannels;
 const int kNumLabels = 10;
-const int kEvalBatchSize = 64;
+const int kEvalBatchSize = 50;
 
 // // A Task holds all of the information for a single inference request.
 struct Task : public tensorflow::serving::BatchTask {
   ~Task() override = default;
   size_t size() const override { return 1; }
 
-  Task(std::atomic_ulong& pred_counter, MnistRequest& request)
-      : pred_counter(pred_counter), request(request) {}
+  Task(std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros, MnistRequest& request)
+      : pred_counter(pred_counter), latency_sum_micros(latency_sum_micros), request(request) {}
 
   std::atomic_ulong& pred_counter;
+  std::atomic_ulong& latency_sum_micros;
   MnistRequest& request;
 };
 
 
 void Classify(
     std::unique_ptr<tensorflow::serving::BasicBatchScheduler<Task>>* batch_scheduler,
-    std::atomic_ulong& pred_counter, MnistRequest& request) {
+    std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros, MnistRequest& request) {
   // Verify input.
   if (request.image_data_size() != kImageDataSize) {
      LOG(WARNING) << tensorflow::strings::StrCat(
@@ -106,7 +107,7 @@ void Classify(
 
   // LOG(INFO) << "AAAAAAAA";
   // Create and submit a task to the batch scheduler.
-  std::unique_ptr<Task> task(new Task(pred_counter, request));
+  std::unique_ptr<Task> task(new Task(pred_counter, latency_sum_micros, request));
   tensorflow::Status status = (*batch_scheduler)->Schedule(&task);
   // LOG(INFO) << "BBBBBBBBBBB";
 
@@ -207,11 +208,15 @@ void DoClassifyInBatch(
   // LOG(INFO) << "created input tensor";
 
   // Run classification.
+
+  tensorflow::uint64 it_start = tensorflow::Env::Default()->NowMicros();
   tensorflow::Tensor scores;
   const tensorflow::Status run_status =
       RunClassification(signature, input, bundle->session.get(),
                         nullptr /* classes */, &scores);
 
+  tensorflow::uint64 it_end = tensorflow::Env::Default()->NowMicros();
+  tensorflow::uint64 latency = it_end - it_start;
   // LOG(INFO) << "KKKKKKKKKKKKKKK";
   if (!run_status.ok()) {
     complete_with_error(run_status.error_message());
@@ -236,13 +241,13 @@ void DoClassifyInBatch(
   // Transform inference output tensor to protobuf output.
   // See mnist_model.py for details.
   const auto& scores_mat = scores.matrix<float>();
+  if (batch_size > kEvalBatchSize) {
+    LOG(INFO) <<
+        tensorflow::strings::StrCat("BIG BATCH: ", batch_size);
+  }
   for (int i = 0; i < batch_size; ++i) {
-    batch->mutable_task(i)->pred_counter.fetch_add(1, std::memory_order::memory_order_relaxed);
-
-    // for (int c = 0; c < scores.dim_size(1); ++c) {
-    //   calldata->mutable_response()->add_value(scores_mat(i, c));
-    // }
-    // calldata->Finish(Status::OK);
+    batch->mutable_task(0)->pred_counter.fetch_add(1, std::memory_order::memory_order_relaxed);
+    batch->mutable_task(0)->latency_sum_micros.fetch_add(latency, std::memory_order::memory_order_relaxed);
   }
 }
 
@@ -302,6 +307,9 @@ int main(int argc, char** argv) {
   load_data(mnist_path, &input_data);
   std::atomic_ulong pred_counter;
   pred_counter.store(0);
+
+  std::atomic_ulong latency_sum_micros;
+  latency_sum_micros.store(0);
   
   tensorflow::port::InitMain(argv[0], &argc, &argv);
 
@@ -352,19 +360,25 @@ int main(int argc, char** argv) {
   
   tensorflow::uint64 start_time = tensorflow::Env::Default()->NowMicros();
   for (int i = 0; i < num_requests; ++i) {
-    Classify(&batch_scheduler, pred_counter, (*input_data)[mnist_dist(rng)]);
+    Classify(&batch_scheduler, pred_counter, latency_sum_micros, (*input_data)[mnist_dist(rng)]);
   }
   // LOG(INFO) << "XXXXXXXXXXXXXXXXXXXXXXXX";
   
   while (batch_scheduler->NumEnqueuedTasks() > 0) {
+    // LOG(INFO) << tensorflow::strings::StrCat("Remaining tasks ", batch_scheduler->NumEnqueuedTasks());
     tensorflow::Env::Default()->SleepForMicroseconds(10 * 1000 /*0.5 sec*/);
   }
 
   tensorflow::uint64 end_time = tensorflow::Env::Default()->NowMicros();
   tensorflow::uint64 processed_reqs = pred_counter.load();
-  double throughput = ((double) processed_reqs) / ((double) (end_time - start_time)) * 1000.0 * 1000.0;
+  tensorflow::uint64 total_batch_latency = latency_sum_micros.load();
+  double mean_latency = (double) total_batch_latency / (double) processed_reqs;
+  tensorflow::uint64 total_micros = (end_time - start_time);
+  double total_seconds = total_micros / (1000.0 * 1000.0);
+
+  double throughput = ((double) processed_reqs) / total_seconds;
   LOG(INFO) << tensorflow::strings::StrCat("Processed ", processed_reqs,
-      " predictions in ", (double) (end_time - start_time) / 1000.0, "ms. Throughput: ",
-      throughput);
+      " predictions in ", total_micros, " micros. Throughput: ",
+      throughput, " Mean Latency: ", mean_latency);
   return 0;
 }
