@@ -32,7 +32,6 @@ limitations under the License.
 #include <vector>
 #include <atomic>
 #include <random>
-#include <cmath>
 
 #include "tensorflow/contrib/session_bundle/manifest.pb.h"
 #include "tensorflow/contrib/session_bundle/session_bundle.h"
@@ -75,13 +74,11 @@ using tensorflow::Tensor;
 using tensorflow::serving::ClassificationSignature;
 
 // namespace {
-const int kImageSize = 28;
-const int kNumChannels = 1;
+const int kImageSize = 32;
+const int kNumChannels = 3;
 const int kImageDataSize = kImageSize * kImageSize * kNumChannels;
 const int kNumLabels = 10;
-const int kEvalBatchSize = 512;
-int maxLatency = 0;
-int batchVal = 0;
+const int kEvalBatchSize = 128;
 
 // // A Task holds all of the information for a single inference request.
 struct Task : public tensorflow::serving::BatchTask {
@@ -90,8 +87,8 @@ struct Task : public tensorflow::serving::BatchTask {
 
   Task(std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros,
        std::atomic_ulong& latency_sum_micros_squared, MnistRequest& request)
-      : pred_counter(pred_counter), latency_sum_micros(latency_sum_micros), 
-	latency_sum_micros_squared(latency_sum_micros_squared), request(request) {}
+      : pred_counter(pred_counter), latency_sum_micros(latency_sum_micros),
+        latency_sum_micros_squared(latency_sum_micros_squared), request(request) {}
 
   std::atomic_ulong& pred_counter;
   std::atomic_ulong& latency_sum_micros;
@@ -255,12 +252,6 @@ void DoClassifyInBatch(
     LOG(INFO) <<
         tensorflow::strings::StrCat("BIG BATCH: ", batch_size);
   }
-  // batch->mutable_task(0)->pred_counter.fetch_add(1, std::memory_order::memory_order_relaxed);
-  if (latency > maxLatency && batchVal) {
-    maxLatency = latency;
-  } else {
-    batchVal = 1;
-  }
   for (int i = 0; i < batch_size; ++i) {
     batch->mutable_task(0)->pred_counter.fetch_add(1, std::memory_order::memory_order_relaxed);
     batch->mutable_task(0)->latency_sum_micros.fetch_add(latency, std::memory_order::memory_order_relaxed);
@@ -379,8 +370,7 @@ int main(int argc, char** argv) {
   
   tensorflow::uint64 start_time = tensorflow::Env::Default()->NowMicros();
   for (int i = 0; i < num_requests; ++i) {
-    Classify(&batch_scheduler, pred_counter, latency_sum_micros, 
-             latency_sum_micros_squared, (*input_data)[mnist_dist(rng)]);
+    Classify(&batch_scheduler, pred_counter, latency_sum_micros, latency_sum_micros_squared, (*input_data)[mnist_dist(rng)]);
   }
   // LOG(INFO) << "XXXXXXXXXXXXXXXXXXXXXXXX";
   
@@ -393,14 +383,12 @@ int main(int argc, char** argv) {
   tensorflow::uint64 processed_reqs = pred_counter.load();
   tensorflow::uint64 total_batch_latency = latency_sum_micros.load();
   tensorflow::uint64 squared_total_batch_latency = latency_sum_micros_squared.load();
-  LOG(INFO) << "Batch latency vals: " << total_batch_latency << " " << squared_total_batch_latency << " " << processed_reqs;
   double mean_latency = (double) total_batch_latency / (double) processed_reqs;
   double std_latency = sqrt(((double) processed_reqs * (double) squared_total_batch_latency)  - pow((double) total_batch_latency, 2)) /
                        (((double) processed_reqs) * ((double) processed_reqs - 1));
   tensorflow::uint64 total_micros = (end_time - start_time);
   double total_seconds = total_micros / (1000.0 * 1000.0);
 
-  LOG(INFO) << "Max Latency: " << maxLatency << "\n";
   double throughput = ((double) processed_reqs) / total_seconds;
   LOG(INFO) << tensorflow::strings::StrCat("Processed ", processed_reqs,
       " predictions in ", total_micros, " micros. Throughput: ",

@@ -122,6 +122,55 @@ cc_binary(
 )
 
 cc_binary(
+    name = "no_rpc_cifar10_benchmarker",
+    srcs = [
+        "no_rpc_cifar10_benchmarker.cc",
+    ],
+    linkopts = ["-lm"],
+    deps = [
+        ":mnist_inference_proto",
+        "//tensorflow_serving/batching:basic_batch_scheduler",
+        "//tensorflow_serving/batching:batch_scheduler",
+        "//tensorflow_serving/core:manager",
+        "//tensorflow_serving/core:servable_handle",
+        "//tensorflow_serving/core:servable_id",
+        "//tensorflow_serving/servables/tensorflow:simple_servers",
+        "@org_tensorflow//tensorflow/contrib/session_bundle",
+        "@org_tensorflow//tensorflow/contrib/session_bundle:manifest_proto_cc",
+        "@org_tensorflow//tensorflow/contrib/session_bundle:signature",
+        "@org_tensorflow//tensorflow/core:framework",
+        "@org_tensorflow//tensorflow/core:lib",
+        "@org_tensorflow//tensorflow/core:protos_all_cc",
+        "@org_tensorflow//tensorflow/core:tensorflow",
+    ],
+)
+
+cc_binary(
+    name = "no_rpc_inception_benchmarker",
+    srcs = [
+        "no_rpc_inception_benchmarker.cc",
+    ],
+    linkopts = ["-lm"],
+    deps = [
+        ":inception_inference_proto",
+        # ":mnist_inference_proto",
+        "//tensorflow_serving/batching:basic_batch_scheduler",
+        "//tensorflow_serving/batching:batch_scheduler",
+        "//tensorflow_serving/core:manager",
+        "//tensorflow_serving/core:servable_handle",
+        "//tensorflow_serving/core:servable_id",
+        "//tensorflow_serving/servables/tensorflow:simple_servers",
+        "@org_tensorflow//tensorflow/contrib/session_bundle",
+        "@org_tensorflow//tensorflow/contrib/session_bundle:manifest_proto_cc",
+        "@org_tensorflow//tensorflow/contrib/session_bundle:signature",
+        "@org_tensorflow//tensorflow/core:framework",
+        "@org_tensorflow//tensorflow/core:lib",
+        "@org_tensorflow//tensorflow/core:protos_all_cc",
+        "@org_tensorflow//tensorflow/core:tensorflow",
+    ],
+)
+
+cc_binary(
     name = "mnist_grpc_server",
     srcs = [
         "mnist_grpc_server.cc",

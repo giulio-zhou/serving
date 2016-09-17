@@ -140,14 +140,17 @@ struct Task : public tensorflow::serving::BatchTask {
   ~Task() override = default;
   size_t size() const override { return 1; }
 
-  Task(std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros, InceptionRequest& request)
-      : pred_counter(pred_counter), latency_sum_micros(latency_sum_micros), request(request) {}
+  Task(std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros,
+       std::atomic_ulong& latency_sum_micros_squared, InceptionRequest& request)
+      : pred_counter(pred_counter), latency_sum_micros(latency_sum_micros),
+        latency_sum_micros_squared(latency_sum_micros_squared), request(request) {}
   // Task(CallData* calldata_arg)
   //     : calldata(calldata_arg) {}
 
   // CallData* calldata;
   std::atomic_ulong& pred_counter;
   std::atomic_ulong& latency_sum_micros;
+  std::atomic_ulong& latency_sum_micros_squared;
   InceptionRequest& request;
 };
 
@@ -356,7 +359,8 @@ void HandleRpcs(InceptionServiceImpl* service_impl,
 } */
 void Classify(
     std::unique_ptr<tensorflow::serving::BasicBatchScheduler<Task>>* batch_scheduler,
-    std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros, InceptionRequest& request) {
+    std::atomic_ulong& pred_counter, std::atomic_ulong& latency_sum_micros,
+    std::atomic_ulong& latency_sum_micros_squared, InceptionRequest& request) {
     // if (request.image_data_size() != kImageDataSize) { 
     //         LOG(WARNING) << tensorflow::strings::StrCat(
     //     	          "expected image_data of size ", kImageDataSize,
@@ -365,7 +369,7 @@ void Classify(
     // }
 
     // Create and submit a task to the batch scheduler.
-    std::unique_ptr<Task> task(new Task(pred_counter, latency_sum_micros, request));
+    std::unique_ptr<Task> task(new Task(pred_counter, latency_sum_micros, latency_sum_micros_squared, request));
     tensorflow::Status status = (*batch_scheduler)->Schedule(&task);
 
     if (!status.ok()) {
@@ -432,7 +436,7 @@ void DoClassifyInBatch(
     }
 
     // Run classification.
-    std::cout << "Classifying\n";
+    // std::cout << "Classifying\n";
     tensorflow::uint64 it_start = tensorflow::Env::Default()->NowMicros();
     tensorflow::Tensor scores;
     // const tensorflow::Status run_status =
@@ -443,7 +447,7 @@ void DoClassifyInBatch(
                           nullptr /* classes */, &scores);
     tensorflow::uint64 it_end = tensorflow::Env::Default()->NowMicros();
     tensorflow::uint64 latency = it_end - it_start;
-    std::cout << "Done Classifying\n";
+    // std::cout << "Done Classifying\n";
     if (!run_status.ok()) {
         complete_with_error(run_status.error_message());
         return;
@@ -471,6 +475,7 @@ void DoClassifyInBatch(
     for (int i = 0; i < batch_size; ++i) {
         batch->mutable_task(0)->pred_counter.fetch_add(1, std::memory_order::memory_order_relaxed);
         batch->mutable_task(0)->latency_sum_micros.fetch_add(latency, std::memory_order::memory_order_relaxed);
+        batch->mutable_task(0)->latency_sum_micros_squared.fetch_add(latency * latency, std::memory_order::memory_order_relaxed);
     }
 }
 
@@ -571,6 +576,8 @@ int main(int argc, char** argv) {
 
   std::atomic_ulong latency_sum_micros;
   latency_sum_micros.store(0);
+  std::atomic_ulong latency_sum_micros_squared;
+  latency_sum_micros_squared.store(0);
 
   tensorflow::port::InitMain(argv[0], &argc, &argv);
 
@@ -619,7 +626,7 @@ int main(int argc, char** argv) {
 
   tensorflow::uint64 start_time = tensorflow::Env::Default()->NowMicros();
   for (int i = 0; i < num_requests; ++i) {
-      Classify(&batch_scheduler, pred_counter, latency_sum_micros, (*input_data)[mnist_dist(rng)]);
+      Classify(&batch_scheduler, pred_counter, latency_sum_micros, latency_sum_micros_squared, (*input_data)[mnist_dist(rng)]);
   }
   std::cout << "put all on queue\n";
 
@@ -630,14 +637,17 @@ int main(int argc, char** argv) {
   tensorflow::uint64 end_time = tensorflow::Env::Default()->NowMicros();
   tensorflow::uint64 processed_reqs = pred_counter.load();
   tensorflow::uint64 total_batch_latency = latency_sum_micros.load();
+  tensorflow::uint64 squared_total_batch_latency = latency_sum_micros_squared.load();
   double mean_latency = (double) total_batch_latency / (double) processed_reqs;
+  double std_latency = sqrt(((double) processed_reqs * (double) squared_total_batch_latency)  - pow((double) total_batch_latency, 2)) /
+                       (((double) processed_reqs) * ((double) processed_reqs - 1));
   tensorflow::uint64 total_micros = (end_time - start_time);
   double total_seconds = total_micros / (1000.0 * 1000.0);
 
   double throughput = ((double) processed_reqs) / total_seconds;
   LOG(INFO) << tensorflow::strings::StrCat("Processed ", processed_reqs,
       " predictions in ", total_micros, " micros. Throughput: ",
-      throughput, " Mean Latency: ", mean_latency);
+      throughput, " Mean Latency: ", mean_latency, " Standard deviation: ", std_latency);
 
   // Run the service.
   // RunServer(port, ready_ids[0].name, std::move(manager));
